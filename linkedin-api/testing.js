@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const qs = require('querystring');
 const fs = require('fs'); // For file storage
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
@@ -290,53 +291,38 @@ async function markMessageAsRead(messageId) {
   }
 }
 
-// Main function 
+// Main Function
 async function main() {
     try {
-      // Get (and potentially refresh) the access token FIRST
-      const accessToken = await getAccessToken(); 
-      outlookConfig.headers['Authorization'] = 'Bearer ' + accessToken;
-  
-      const userID = await getUserID();
-      console.log("Fetched user ID:", userID);
-  
-      while (true) {
-        const unreadEmails = await getUnreadEmails();
-  
-        for (const email of unreadEmails) {
-       
-          const details = extractDetailsFromBody(email.bodyPreview);
-          console.log("Extracted details:", details);
+        await getAccessToken();
+        const userID = await getUserID();
 
-          if (details.studentName && details.employerName && details.studentLinkedInAccountLink) {
-            try {
-              // Attempt to create the LinkedIn post
-              await createLinkedInPost(details.studentName, details.employerName, details.studentLinkedInAccountLink, details.employerLinkedInAccountLink, userID);
-
-              // If the post is created successfully, mark the email as read
-              await markMessageAsRead(email.id);
-            } catch (error) {
-              console.error(`Error processing email ${email.id}:`, error);
-
-            // send a notification email if the LinkedIn post fails
-            // sendErrorNotificationEmail(error, email); 
+        while (true) {
+            const unreadEmails = await getUnreadEmails();
+            for (const email of unreadEmails) {
+                const details = extractDetailsFromBody(email.bodyPreview);
+                if (details.studentName && details.employerName) {
+                    try {
+                        await createLinkedInPost(details, userID);
+                        await markMessageAsRead(email.id);
+                    } catch (error) {
+                        console.error(`Error processing email ${email.id}:`, error);
+                        await sendErrorNotificationEmail(error, email);
+                    }
+                } else {
+                    console.warn("Skipping email with incomplete details:", email.bodyPreview);
+                }
             }
-          } else {
-          console.warn("Skipping email with incomplete details:", email.bodyPreview);
-          }
+            await new Promise(resolve => setTimeout(resolve, 60 * 1000)); 
         }
-  
-        await new Promise(resolve => setTimeout(resolve, 60 * 1000));
-      }
     } catch (error) {
-      console.error("Main function error:", error.message);
+        console.error("Main function error:", error);
+        // Handle the error here (e.g., send a notification, retry, or exit gracefully)
     }
-  }
-  
-  // Start the server AFTER potential initial authorization
-  app.listen(PORT, async () => {
+}
+
+// Start Server (for initial authorization)
+app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
-  
-    // Start the main loop after the server is listening
-    await main(); 
-  });
+    main().catch(console.error); // Start the main loop
+});
